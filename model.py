@@ -13,6 +13,31 @@ import numpy as np
 import scipy.sparse as sparse
 from sklearn.neighbors import NearestNeighbors
 
+#general structure / api
+class Model:
+    def predict(self, user, item):
+        pass
+
+def getData(aquisitor, filename):
+    data = aquisitor(filename)
+    if isinstance(data, sparse.csr_matrix):
+        return data #expected to be a csr sparse matrix
+    raise Exception('aquisitor did not return scipy.sparse.csr_matrix')
+
+def preprocessData(preprocessor, data):
+    processedData = preprocessor(data)
+    if isinstance(processedData, dict):
+        if 'data' in processedData and 'datainfo' in processedData:
+            return processedData #expected to be a dictionary with the data in 'dict', and information about other available data in 'datainfo'
+    raise Exception('preprocessor did not meet spec')
+
+def generateModel(modelGenerator, processedData):
+    model = modelFactory(processedData)
+    if isinstance(model, Model):
+        return model
+    raise Exception('modelFactory did not generate a Model')
+
+
 #get data#
 with open(sys.argv[1], "rb") as infile:
     training_data = pickle.load(infile) #expected sparse csr format
