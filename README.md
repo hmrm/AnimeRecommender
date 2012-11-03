@@ -1,6 +1,4 @@
 AnimeRecommender
 ================
 
-SVD recommender for myanimelist.com
-=======
-Recommendation engine
+A general recommendation engine, built to be compatible with Anime rating data.
