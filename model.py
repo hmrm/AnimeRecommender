@@ -1,8 +1,8 @@
 #!/usr/bin/python
 
 class Model:
-    def __init__(self, dataBox, preprocessor, predictor):
-        self.dataBox = dataBox
+    def __init__(self, dataLoader, preprocessor, predictor):
+        self.dataLoader = dataLoader #should be a DataBox
         self.preprocessor = preprocessor
         self.predictor = predictor
 
