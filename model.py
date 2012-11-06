@@ -1,63 +1,59 @@
 #!/usr/bin/python
 
-#arguments:
-#          1: Training File
-#          2: normalization: item, user, none, ui, or iu 
-#          3: model algorithm: item-item-knn
-#          4: Number of nearest neighbors, if applicable, else expects "-"
-# sys.argv = ["", "0_training_re_pickle.dat", "ui", "item-item-knn", 15]
-import cPickle as pickle
-import sys
-from sklearn.preprocessing import normalize
-import numpy as np
-import scipy.sparse as sparse
-from sklearn.neighbors import NearestNeighbors
-
-#general structure / api
 class Model:
-    def predict(self, user, item):
-        pass
-
-def getData(aquisitor, filename):
-    data = aquisitor(filename)
-    if isinstance(data, sparse.csr_matrix):
-        return data #expected to be a csr sparse matrix
-    raise Exception('aquisitor did not return scipy.sparse.csr_matrix')
-
-def preprocessData(preprocessor, data):
-    processedData = preprocessor(data)
-    if isinstance(processedData, dict):
-        if 'data' in processedData and 'datainfo' in processedData:
-            return processedData #expected to be a dictionary with the data in 'dict', and information about other available data in 'datainfo'
-    raise Exception('preprocessor did not meet spec')
-
-def generateModel(modelGenerator, processedData):
-    model = modelFactory(processedData)
-    if isinstance(model, Model):
-        return model
-    raise Exception('modelFactory did not generate a Model')
+    def __init__(self, dataBox, preprocessor, predictor):
+        self.dataBox = dataBox
+        self.preprocessor = preprocessor
+        self.predictor = predictor
 
 
-#get data#
-with open(sys.argv[1], "rb") as infile:
-    training_data = pickle.load(infile) #expected sparse csr format
+class DataBox:
+    def __init__(self, dataLocation, loadFunction):
+        self.dataLocation = dataLocation #argument to the load function, typically where the data is
+        self.loadFunction = loadFunction #the function used to load the data, should return the data
+        self.data = None
+    def load():
+        self.data = loadFunction(dataLocation)
+    def getData(): #look at me, look at me, I can be lazy too!
+        if self.data == None:
+            self.load()
+            if self.data == None:
+                raise Exception("Data load failure")
+        return self.data
 
-#normalize data#
-if sys.argv[2] == "user":
-    normalized_data = normalize(training_data.copy())
-elif sys.argv[2] == "item":
-    normalized_data = normalize(training_data.copy(), axis = 0)
-elif sys.argv[2] == "iu": #item then user
-    normalized_data = normalize(training_data.copy(), axis = 0)
-    normalize(normalized_data, copy = False)
-elif sys.argv[2] == "ui":
-    normalized_data = normalize(training_data.copy())
-    normalize(normalized_data, axis = 0, copy = False)
-else: 
-    normalized_data = training_data.copy()
+class Preprocessor:
+    def __init__(self, function, inverse):
+        self.function = function #expected to return a tuple: (processed data, info for inverse to do deprocessing)
+        self.inverse = inverse #expected to work on subsets of the columns of function
+        self.deprocessdata = None
+    def preprocess(data):
+        (ret, self.deprocessdata) = function(data)
+        return ret
+    def deprocess(data):
+        if self.deprocessdata = None:
+            raise Exception("Requested deprocess when there was no evidence of preprocessing")
+        return inverse(deprocessdata)
 
-#build model#
-if True:#sys.argv[3] == "item-item-knn":
-    model = NearestNeighbors(n_neighbors = sys.argv[4])
-    model.fit(normalized_data.transpose())
+class Predictor:
+    def __init__(self, predictor):
+        self.predictor = predictor #expected to be a function from ((user, item), data) tuples to (prediction, data modified with new information) tuples
+        self.data = None
+    def predict(user, item):
+        (ret, data) = predictor((user, item), data)
+        return ret
 
+def sequencedPreprocessor(preprocessors): #expects an ordered list of preprocessors, from first applied to last (ie f(g(z(m(x)))) would be [m,z,g,f]
+    def function(data):
+        for i in xrange(len(preprocessors)):
+            (data, _) = preprocessors[i].function(data)
+        return (data, True)
+    def deprocess(data):
+        for i in xrange(len(preprocessors) - 1, -1, -1): #looping backwards
+            data = preprocessors[i].deprocess(data)
+        return data
+    return Preprocessor(function, deprocess)
+
+def mixedPredictor(predictors, mixfunction):
+    def predictor(user, item):
+        return((mixfunction([p.predict(user, item) for p in predictors]), True))
+    return Predictor(predictor)
