@@ -1,11 +1,27 @@
 #!/usr/bin/python
+import cPickle as pickle
+import bottleneck as bn
 
 class Model:
-    def __init__(self, dataLoader, preprocessor, predictor):
-        self.dataLoader = dataLoader #should be a DataBox
-        self.preprocessor = preprocessor
+    def __init__(self, predictor, dataBox, preprocessor):
         self.predictor = predictor
-
+        self.dataBox = dataBox
+        self.preprocessor = preprocessor
+        self.preppedData = False
+    def loadData():
+        self.dataBox.load()            
+    def prepData():
+        self.dataBox.data = self.preprocessor.preprocess(self.dataBox.getData())
+        preppedData = True
+    def predict(user, item):
+        if not preppedData:
+            prepData()
+        return self.preprocessor.deprocess(user, item, self.predictor.predict(user, item))
+    def getErrors(triples): #triples is expected to be a list of (user, item, value) 3-tuples
+        return [value - self.predict(user, item) for (user, item, value) in triples]
+    def getTopN(user, items, n): #look at me ma, I can write illegible code too!
+        return [items[i] for i in bn.argpartsort([self.predict(user, item) for item in items], n)[:n]]
+        #In all seriousness though: this takes the predictions for each of the items, argpartsort partially sorts the indicies of the list based on the values, fully sorting the first n, we trim the list to the fully sorted subset (ie the top n (we actually found the n smallest of the negatice of the list)), and returns the items for those indicies.
 
 class DataBox:
     def __init__(self, dataLocation, loadFunction):
@@ -22,17 +38,17 @@ class DataBox:
         return self.data
 
 class Preprocessor:
-    def __init__(self, function, inverse):
-        self.function = function #expected to return a tuple: (processed data, info for inverse to do deprocessing)
-        self.inverse = inverse #expected to work on subsets of the columns of function
-        self.deprocessdata = None
+    def __init__(self, proc, deproc):
+        self.proc = proc #expected to return a tuple: (processed data, info for inverse to do deprocessing)
+        self.deproc = deproc #expected to take a ((user, item, value), deprocessdata) and return a value
+        self.deprocessdata == None
     def preprocess(data):
-        (ret, self.deprocessdata) = function(data)
+        (ret, self.deprocessdata) = proc(data)
         return ret
-    def deprocess(data):
-        if self.deprocessdata = None:
+    def deprocess(user, item, value):
+        if self.deprocessdata == None:
             raise Exception("Requested deprocess when there was no evidence of preprocessing")
-        return inverse(deprocessdata)
+        return deproc((user, item, value), deprocessdata)
 
 class Predictor:
     def __init__(self, predictor):
@@ -43,15 +59,15 @@ class Predictor:
         return ret
 
 def sequencedPreprocessor(preprocessors): #expects an ordered list of preprocessors, from first applied to last (ie f(g(z(m(x)))) would be [m,z,g,f]
-    def function(data):
+    def proc(data):
         for i in xrange(len(preprocessors)):
             (data, _) = preprocessors[i].function(data)
         return (data, True)
-    def deprocess(data):
+    def deproc((user, item, value), _):
         for i in xrange(len(preprocessors) - 1, -1, -1): #looping backwards
-            data = preprocessors[i].deprocess(data)
-        return data
-    return Preprocessor(function, deprocess)
+            value = preprocessors[i].deprocess(user, item, value)
+        return value
+    return Preprocessor(proc, deproc)
 
 def mixedPredictor(predictors, mixfunction):
     def predictor(user, item):
