@@ -18,10 +18,17 @@ class Model:
             prepData()
         return self.preprocessor.deprocess(user, item, self.predictor.predict(user, item))
     def getErrors(triples): #triples is expected to be a list of (user, item, value) 3-tuples
-        return [value - self.predict(user, item) for (user, item, value) in triples]
+        if not self.predictor.stateless:
+            return [value - self.predict(user, item) for (user, item, value) in triples]
+        else:
+            pass #parallel code will be here
     def getTopN(user, items, n): #look at me ma, I can write illegible code too!
-        return [items[i] for i in bn.argpartsort([self.predict(user, item) for item in items], n)[:n]]
-        #In all seriousness though: this takes the predictions for each of the items, argpartsort partially sorts the indicies of the list based on the values, fully sorting the first n, we trim the list to the fully sorted subset (ie the top n (we actually found the n smallest of the negatice of the list)), and returns the items for those indicies.
+        if not self.predictor.stateless:
+            return [items[i] for i in bn.argpartsort([self.predict(user, item) for item in items], n)[:n]]
+            #In all seriousness though: this takes the predictions for each of the items, argpartsort partially sorts the indicies of the list based on the values, fully sorting the first n, we trim the list to the fully sorted subset (ie the top n (we actually found the n smallest of the negatice of the list)), and returns the items for those indicies.
+        else:
+            pass #parallel code will be here
+
 
 class DataBox:
     def __init__(self, dataLocation, loadFunction):
@@ -51,12 +58,22 @@ class Preprocessor:
         return deproc((user, item, value), deprocessdata)
 
 class Predictor:
-    def __init__(self, predictor):
+    def __init__(self, predictor, stateless=False, init=None): #stateless parallelism not implemented yet
         self.predictor = predictor #expected to be a function from ((user, item), data) tuples to (prediction, data modified with new information) tuples
+        self.stateless = stateless
+        if stateless:
+            if init=None:
+                raise Exception("stateless but no initialization function in predictor")
+            self.init = init
         self.data = None
-    def predict(user, item):
-        (ret, data) = predictor((user, item), data)
-        return ret
+    def init(self, data): #for use with parallel predictors
+        self.data = self.init(data)
+    def predict(self, user, item):
+        if not stateless:
+            (ret, self.data) = predictor((user, item), self.data)
+            return ret
+        else:
+            return predictor((user, item), self.data)[0]
 
 def sequencedPreprocessor(preprocessors): #expects an ordered list of preprocessors, from first applied to last (ie f(g(z(m(x)))) would be [m,z,g,f]
     def proc(data):
