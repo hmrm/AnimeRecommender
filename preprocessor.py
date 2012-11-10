@@ -21,3 +21,10 @@ def sequencedPreprocessor(preprocessors): #expects an ordered list of preprocess
             value = preprocessors[i].deprocess(user, item, value)
         return value
     return Preprocessor(proc, deproc)
+
+def getIdentityPreprocessor():
+    def proc(data):
+        return (data, True)
+    def deproc((_,_, value) _):
+        return value
+    return Preprocessor(proc, deproc)
