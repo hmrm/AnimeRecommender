@@ -8,6 +8,10 @@ resolvers ++= Seq(
   "spray"    at "http://repo.spray.io",
   "typesafe" at "http://repo.typesafe.com/typesafe/releases/")
 
-libraryDependencies ++= Seq("io.prediction"           % "client"       % "0.6.1",
-                            "io.spray"                % "spray-client" % "1.3.0",
-                            "com.typesafe.akka"      %% "akka-actor"   % "2.3.0")
+libraryDependencies ++= Seq("io.prediction"            % "client"        % "0.6.1",
+                            "io.spray"                 % "spray-client"  % "1.3.0",
+                            "com.typesafe.akka"       %% "akka-actor"    % "2.3.0",
+                            "org.scalatest"           %% "scalatest"     % "2.1.0",
+                            "org.seleniumhq.selenium"  % "selenium-java" % "2.25.0")
+
+fork := true
