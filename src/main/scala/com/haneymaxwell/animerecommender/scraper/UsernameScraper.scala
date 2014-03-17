@@ -5,6 +5,8 @@ import org.scalatest.selenium.Chrome
 import java.util.concurrent.{BlockingQueue, ArrayBlockingQueue}
 import scala.slick.driver.SQLiteDriver.simple._
 import scala.concurrent.blocking
+import concurrent.ExecutionContext.Implicits.global
+
 
 object DB {
   import UsernameScraper.{AID, SeriesName, Username, Rating}
@@ -69,7 +71,6 @@ object UsernameScraper {
 
   import scala.util.matching.Regex
   import scala.concurrent.Future
-  import concurrent.ExecutionContext.Implicits.global
   import scala.concurrent.duration.{FiniteDuration, Duration}
 
   case class Username(get: String)
@@ -86,29 +87,23 @@ object UsernameScraper {
 
   case class GenerateNamesResult(femaleNames: Set[Username], maleNames: Set[Username])
 
-  def getResults(gender: Gender, index: Int): Future[String] = Future {
-    lazy val scrape = new Scraper
-    try {
-      scrape source genUrl(gender, index)
-    } finally {
-      scrape.cleanup()
-    }
-  }
+  def getResults(gender: Gender, index: Int, scrape: DriverManager): Future[String] =
+    scrape source genUrl(gender, index)
 
-  def getNames(gender: Gender, index: Int): Future[Set[Username]] = {
+  def getNames(gender: Gender, index: Int, scrape: DriverManager): Future[Set[Username]] = {
     import scala.util.matching.Regex.Match
-    getResults(gender, index) map (NameExtractor.findAllMatchIn(_).toSet.map((m: Match) => Username(m.group("name"))))
+    getResults(gender, index, scrape) map (NameExtractor.findAllMatchIn(_).toSet.map((m: Match) => Username(m.group("name"))))
   }
 
-  def generateNames(lastSuccessful: GenerateNamesResult = GenerateNamesResult(Set(), Set())): (Future[Unit], BlockingQueue[Username]) = {
+  def generateNames(scrape: DriverManager, lastSuccessful: GenerateNamesResult = GenerateNamesResult(Set(), Set())): (Future[Unit], BlockingQueue[Username]) = {
     lazy val queue = new ArrayBlockingQueue[Username](100)
     def recur(lastSuccessful: GenerateNamesResult): Future[Unit] = {
 
       lazy val nFemale = lastSuccessful.femaleNames.size
       lazy val nMale   = lastSuccessful.maleNames.size
 
-      lazy val femaleResult = getNames(Female, nFemale)
-      lazy val maleResult   = getNames(Male,   nMale)
+      lazy val femaleResult = getNames(Female, nFemale, scrape)
+      lazy val maleResult   = getNames(Male,   nMale,   scrape)
       lazy val results = femaleResult zip maleResult
 
       results flatMap { case (newFemaleNames, newMaleNames) =>
@@ -131,11 +126,8 @@ object UsernameScraper {
   def genUrl(username: Username): String =
     s"http://myanimelist.net/malappinfo.php?u=${username.get}&status=all&type=anime"
 
-  def processName(name: Username): Future[String] = {
-    lazy val scrape = new Scraper
-    lazy val res = Future(scrape text genUrl(name))
-    res onComplete { _ => scrape.cleanup() }
-    res map { str => str.split('\n').mkString("") } // I am not entirely sure why this is necessary, but it is
+  def processName(name: Username, scrape: DriverManager): Future[String] = {
+    scrape text genUrl(name) map { str => str.split('\n').mkString("") } // I am not entirely sure why this is necessary, but it is
   }
 
   // Note: it would be nicer just to parse this into XML, but it looks like it isn't adequately standards conforming
@@ -162,16 +154,16 @@ object UsernameScraper {
     (res.map(x => x._1).toMap, res.map(x => x._2).toMap)
   }
 
-  def processUsernames(queue: BlockingQueue[Username], queueDone: Future[Unit]): Future[Unit] = {
+  def processUsernames(queue: BlockingQueue[Username], queueDone: Future[Unit], scrape: DriverManager): Future[Unit] = {
     if (queueDone.isCompleted) Future.successful(())
     else {
       Future { blocking(queue.take()) } flatMap { user =>
-        processName(user) map { case data =>
+        processName(user, scrape) map { case data =>
           lazy val results = processData(data)
           results._1 foreach { case (aid, name)   => DB.addName  (aid, name)         }
           results._2 foreach { case (aid, rating) => DB.addRating(user, aid, rating) }
           DB.processUsername(user)
-        } flatMap { _ => blocking{processUsernames(queue, queueDone)} }
+        } flatMap { _ => blocking{processUsernames(queue, queueDone, scrape)} }
       }
     }
   }
@@ -188,17 +180,57 @@ object UsernameScraper {
   }
 }
 
-class Scraper extends Chrome {
-  def source(url: String) = {
-    go to url
-    pageSource
+class DriverManager(nScrapers: Int) {
+
+  protected class Scraper extends Chrome {
+    def source(url: String) = {
+      go to url
+      pageSource
+    }
+
+    def text(url: String) = {
+      import org.openqa.selenium.By
+      go to url
+      webDriver.findElement(By.tagName("body")).getText
+    }
+
+    def cleanup() = quit()
   }
 
-  def text(url: String) = {
-    import org.openqa.selenium.By
-    go to url
-    webDriver.findElement(By.tagName("body")).getText
+  import scala.concurrent.{Promise, Future}
+
+  lazy val queue: BlockingQueue[ScrapeRequest] = new ArrayBlockingQueue(40)
+
+  lazy val scrapers = Range(0, nScrapers) map {_ => new Scraper}
+
+  scrapers map consume
+
+  protected def consume(scrape: Scraper): Future[Unit] = Future {
+    import scala.util.Try
+    lazy val request = blocking(queue.take())
+    request.promise.complete(Try(request.fx(scrape)))
+    consume(scrape)
   }
 
-  def cleanup() = close()
+  case class ScrapeRequest(promise: Promise[String], fx: Scraper => String)
+
+  protected def dispatch(fx: Scraper => String): Future[String] = {
+    lazy val promise = Promise[String]()
+    for {
+      dispatched <- Future { blocking(queue.put(ScrapeRequest(promise, fx))) }
+      result     <- promise.future
+    } yield result
+  }
+
+  def source(url: String): Future[String] = {
+    dispatch(scrape => scrape source url)
+  }
+
+  def text  (url: String): Future[String] = {
+    dispatch(scrape => scrape text   url)
+  }
+
+  def done() = scrapers map (scrape => scrape.cleanup())
 }
+
+
