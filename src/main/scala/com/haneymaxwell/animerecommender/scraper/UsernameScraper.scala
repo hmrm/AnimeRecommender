@@ -207,9 +207,27 @@ class DriverManager(nScrapers: Int) {
 
   protected def consume(scrape: Scraper): Future[Unit] = Future {
     import scala.util.Try
+    import scala.concurrent.Await
+    import scala.concurrent.duration._
+    import java.util.concurrent.TimeoutException
+    import scala.annotation.tailrec
+
     lazy val request = blocking(queue.take())
-    request.promise.complete(Try(request.fx(scrape)))
-    consume(scrape)
+
+    def getResult(scrape: Scraper, timeout: Duration = 1 minute): (Scraper, String) =
+      try {
+        (scrape, Await.result(Future(request.fx(scrape)), timeout))
+      } catch {
+        case e: TimeoutException => {
+          scrape.cleanup()
+          lazy val newScrape = new Scraper
+          getResult(newScrape, timeout * 2)
+        }
+      }
+
+    lazy val result = getResult(scrape)
+    request.promise.success(result._2)
+    consume(result._1)
   }
 
   case class ScrapeRequest(promise: Promise[String], fx: Scraper => String)
