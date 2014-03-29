@@ -8,10 +8,10 @@ object DB {
 
   lazy val db = Database.forURL("jdbc:sqlite:/tmp/ardb.db", driver = "org.sqlite.JDBC")
 
-  class Usernames(tag: Tag) extends Table[(String, Boolean)](tag, "USERNAMES") {
+  class Usernames(tag: Tag) extends Table[(String, Long)](tag, "USERNAMES") {
     def username  = column[String]("USERNAME")
-    def processed = column[Boolean]("PROCESSED")
-    def * = (username, processed)
+    def lastProcessed = column[Long]("PROCESSED")
+    def * = (username, lastProcessed)
   }
   lazy val usernames = TableQuery[Usernames]
 
@@ -54,11 +54,11 @@ object DB {
 
   def addUsername(user: Username) = db withSession { implicit session =>
     println(s"Added username: $user")
-    usernames += (user.get, false)
+    usernames += (user.get, 0)
   }
 
   def processUsername(user: Username) = db withSession { implicit session =>
-    lazy val q = for { u <- usernames if u.username === user.get } yield u.processed
-    q.update(true)
+    lazy val q = for { u <- usernames if u.username === user.get } yield u.lastProcessed
+    q.update(System.currentTimeMillis())
   }
 }
