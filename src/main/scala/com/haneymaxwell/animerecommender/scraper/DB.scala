@@ -1,6 +1,7 @@
 package com.haneymaxwell.animerecommender.scraper
 
 import scala.slick.driver.SQLiteDriver.simple._
+import java.sql.SQLException
 
 object DB {
 
@@ -8,25 +9,27 @@ object DB {
 
   lazy val db = Database.forURL("jdbc:sqlite:/tmp/ardb.db", driver = "org.sqlite.JDBC")
 
-  class Usernames(tag: Tag) extends Table[(String, Long)](tag, "USERNAMES") {
-    def username  = column[String]("USERNAME")
+  class Usernames(tag: Tag) extends Table[(String, Int, Long)](tag, "USERNAMES") {
+    def username  = column[String]("USERNAME", O.PrimaryKey, O.DBType("TEXT"))
+    def gender = column[Int]("GENDER")
     def lastProcessed = column[Long]("PROCESSED")
-    def * = (username, lastProcessed)
+    def * = (username, gender, lastProcessed)
   }
   lazy val usernames = TableQuery[Usernames]
 
   class Names(tag: Tag) extends Table[(Int, String)](tag, "NAMES") {
     def anime = column[Int]("AID", O.PrimaryKey)
-    def name  = column[String]("NAME")
+    def name  = column[String]("NAME", O.DBType("TEXT"))
     def * = (anime, name)
   }
   lazy val names = TableQuery[Names]
 
-  class Ratings(tag: Tag) extends Table[(String, Int, Int)](tag, "RATINGS") {
-    def user   = column[String]("UID")
+  class Ratings(tag: Tag) extends Table[(Int, String, Int, Int)](tag, "RATINGS") {
+    def hash   = column[Int]("HASH", O.PrimaryKey)
+    def user   = column[String]("UID", O.DBType("TEXT"))
     def anime  = column[Int]("AID")
     def rating = column[Int]("RATING")
-    def * = (user, anime, rating)
+    def * = (hash, user, anime, rating)
   }
   lazy val ratings = TableQuery[Ratings]
 
@@ -40,25 +43,54 @@ object DB {
     }
   }
 
-  def addName(aid: AID, name: SeriesName) = db withSession { implicit session =>
-    if(!names.filter(_.anime === aid.get).exists.run) {
+  def addName(aid: AID, name: SeriesName): Unit = db withSession { implicit session =>
+    try {
+      names +=(aid.get, name.get)
       println(s"Added name: $name for series $aid")
-      names += (aid.get, name.get)
+    } catch {
+      case e: SQLException if e.getMessage.contains("unique") => println(s"$name already present, not adding")
     }
   }
 
-  def addRating(user: Username, aid: AID, rating: Rating) = db withSession { implicit session =>
-    println(s"Added rating: $rating for anime: $aid for user $user")
-    ratings += Tuple3(user.get, aid.get, rating.get)
+  def addRating(user: Username, aid: AID, rating: Rating): Unit = db withSession { implicit session =>
+    lazy val hash: Int = user.hashCode() ^ aid.hashCode()
+    try {
+      ratings += Tuple4(hash, user.get, aid.get, rating.get)
+      println(s"Added rating: $rating for anime: $aid for user $user")
+    } catch {
+      case e: SQLException if e.getMessage.contains("unique") => {
+        lazy val q = for { r <- ratings if r.hash === hash } yield r.rating
+        q.update(rating.get)
+        println(s"Updated rating $aid $user to $rating")
+      }
+    }
   }
 
-  def addUsername(user: Username) = db withSession { implicit session =>
-    println(s"Added username: $user")
-    usernames += (user.get, 0)
+  def addUsername(user: Username, gender: Gender): Unit = db withSession { implicit session =>
+    try { usernames +=(user.get, gender.toInt, 0); println(s"Added username: $user") }
+    catch { case e: SQLException if e.getMessage.contains("unique") => {
+      println(s"$user already present, not adding")
+    }}
   }
 
-  def processUsername(user: Username) = db withSession { implicit session =>
+  def usernamePresent(user: Username): Boolean = db withSession { implicit session =>
+    usernames.filter(_.username === user.get).exists.run
+  }
+
+  def processUsername(user: Username): Unit = db withSession { implicit session =>
     lazy val q = for { u <- usernames if u.username === user.get } yield u.lastProcessed
     q.update(System.currentTimeMillis())
+  }
+
+  def nUsernamesProcessed(gender: Gender): Int = db withSession { implicit session =>
+    lazy val q = for { u <- usernames if u.gender === gender.toInt } yield u
+    q.list.size
+  }
+
+  /** NOTE: Least recent will be first */
+  def usernamesSortedByRecentness(n: Int): Seq[(Username, Gender)] = db withSession { implicit session =>
+    usernames.sortBy(_.lastProcessed).map(u => (u.username, u.gender)).take(n).run.map {
+      case (username, gender) => (Username(username), Gender(gender))
+    }
   }
 }

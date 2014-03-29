@@ -8,4 +8,8 @@ object Data {
   case class SeriesName(get: String)
 
   case class Username(get: String)
+
+  case class Gender(toInt: Int)
+  object Female extends Gender(2)
+  object Male extends Gender(1)
 }
