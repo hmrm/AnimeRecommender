@@ -1,5 +1,0 @@
-package com.haneymaxwell.animerecommender
-
-object Main {
-  def main = ()
-}
