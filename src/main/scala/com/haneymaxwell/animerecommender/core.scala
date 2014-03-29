@@ -11,8 +11,8 @@ object Main {
     DB.make()
     lazy val scrape = new DriverManager(4)
     lazy val names = UsernameScraper.generateNames(scrape)
-    lazy val queue = UsernameScraper.rateLimit(names._2, 25, 2 seconds)
-    lazy val scrapers = Range(0, 4) map { _ => UsernameScraper.processUsernames(queue, names._1, scrape) }
+    lazy val queue = QueueUtils.rateLimit(names._2, 25, 2 seconds)
+    lazy val scrapers = Range(0, 4) map { _ => RatingsScraper.processUsernames(queue, names._1, scrape) }
     Await.result(Future.sequence(scrapers), 60 days)
   }
 }
