@@ -7,7 +7,7 @@ object DB {
 
   import Data._
 
-  lazy val db = Database.forURL("jdbc:sqlite:/tmp/ardb.db", driver = "org.sqlite.JDBC")
+  lazy val db = Database.forURL("jdbc:sqlite:/home/hmrm/ardb.db", driver = "org.sqlite.JDBC")
 
   class Usernames(tag: Tag) extends Table[(String, Int, Long)](tag, "USERNAMES") {
     def username  = column[String]("USERNAME", O.PrimaryKey, O.DBType("TEXT"))

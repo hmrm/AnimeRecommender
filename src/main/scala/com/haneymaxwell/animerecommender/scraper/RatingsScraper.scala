@@ -46,22 +46,22 @@ object RatingsScraper {
   def processUsernames(queue: BlockingQueue[(Username, Gender)], scrape: DriverManager): Future[Unit] = Future {
     lazy val (user, gender) = blocking(queue.take())
 
-    processName(user, scrape) map { data =>
+    lazy val result: Future[String] = processName(user, scrape).escalate
 
+    result onSuccess { case data =>
       lazy val results: (Map[AID, SeriesName], Map[AID, Rating]) = blocking(processData(data))
 
       results._1 foreach {
-        case (aid, name) => DB.addName(aid, name)
+        case (aid, name) => blocking(DB.addName(aid, name))
       }
 
       results._2 foreach {
-        case (aid, rating) => DB.addRating(user, aid, rating)
+        case (aid, rating) => blocking(DB.addRating(user, aid, rating))
       }
 
-      DB.addUsername(user, gender)
-      DB.processUsername(user)
-
-    } escalate
+      blocking(DB.addUsername(user, gender))
+      blocking(DB.processUsername(user))
+    }
 
     processUsernames(queue, scrape)
     ()

@@ -13,11 +13,11 @@ object Main {
 
     DB.make()
 
-    lazy val usernameQueue = new ArrayBlockingQueue[(Username, Gender)](1)
-    lazy val scrape = new DriverManager(4)
-    lazy val scrapers = Range(0, 4) map { _ => RatingsScraper.processUsernames(usernameQueue, scrape) }
+    lazy val usernameQueue = new ArrayBlockingQueue[(Username, Gender)](40)
+    lazy val scrape = new DriverManager(6)
+    lazy val wontStop = RatingsScraper.processUsernames(usernameQueue, scrape)
     QueueUtils.report(Seq(("UsernameQueue", usernameQueue)), 5 seconds)
     UsernameManager.scrapeAndUpdate(scrape, usernameQueue)
-    Await.result(Future.sequence(scrapers), 60 days)
+    Await.result(wontStop, 6000 days)
   }
 }

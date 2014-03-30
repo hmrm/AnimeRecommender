@@ -75,10 +75,8 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
 
   protected def dispatch(fx: Scraper => String): Future[String] = {
     lazy val promise = Promise[String]()
-    (for {
-      dispatched <- Future(blocking(queue.put(ScrapeRequest(promise, fx))))
-      result     <- promise.future
-    } yield result).escalate
+    blocking(queue.put(ScrapeRequest(promise, fx)))
+    promise.future.escalate
   }
 
   def source(url: String): Future[String] = {
