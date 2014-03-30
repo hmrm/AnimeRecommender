@@ -10,6 +10,9 @@ import com.haneymaxwell.animerecommender.Util._
 import scala.concurrent.duration._
 
 class DriverManager(nScrapers: Int, queueSize: Int = 2) {
+  import akka.actor.ActorSystem
+  lazy val system = ActorSystem()
+  lazy val scheduler = system.scheduler
 
   protected class Scraper extends Chrome {
     def source(url: String) = blocking {
@@ -51,7 +54,7 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
       val request = blocking(queue.take())
       // println(s"Scraper $index got request")
 
-      def getResult(scrape: Scraper, timeout: Duration = 1.minute): (Scraper, String) =
+      def getResult(scrape: Scraper, timeout: Duration = 1.minute, reattempt: Int = 0): (Scraper, String) =
         try {
           (scrape, Await.result(
             Future{ /* println(s"Scraper $index running scraping task") ;*/ request.fx(scrape) }.escalate, timeout))
@@ -60,7 +63,16 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
             println(s"Timed out on request for scraper $index, restarting scraper")
             scrape.cleanup()
             lazy val newScrape = new Scraper
-            getResult(newScrape, timeout * 2)
+            getResult(newScrape, timeout * 2, reattempt)
+          }
+          case e => {
+            if (reattempt > 10) throw e
+            else {
+              println(s"Got error $e for scraper $index, reattempting")
+              scrape.cleanup()
+              lazy val newScrape = new Scraper
+              getResult(newScrape, timeout, reattempt + 1)
+            }
           }
         }
 
