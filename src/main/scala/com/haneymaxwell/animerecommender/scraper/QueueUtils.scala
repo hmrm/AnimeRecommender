@@ -17,4 +17,16 @@ object QueueUtils {
     }
     rateLimitedQueue
   }
+
+  def report(queues: Traversable[(String, BlockingQueue[_])], interval: FiniteDuration): Unit = {
+    import akka.actor.ActorSystem
+    lazy val system = ActorSystem()
+    lazy val scheduler = system.scheduler
+
+    scheduler.schedule(interval, interval) {
+      queues foreach { case (name, queue) =>
+        println(s"Queue $name has remaining capacity ${queue.remainingCapacity()} with ${queue.size()} items currently queued ")
+      }
+    }
+  }
 }

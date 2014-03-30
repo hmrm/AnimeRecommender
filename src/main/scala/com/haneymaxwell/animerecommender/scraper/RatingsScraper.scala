@@ -43,29 +43,27 @@ object RatingsScraper {
     (res.map(x => x._1).toMap, res.map(x => x._2).toMap)
   }
 
-  def processUsernames(queue: BlockingQueue[(Username, Gender)], scrape: DriverManager): Future[Unit] = {
-    Future(blocking(queue.take())) flatMap {
-      case (user, gender) =>
-        processName(user, scrape) map { data =>
+  def processUsernames(queue: BlockingQueue[(Username, Gender)], scrape: DriverManager): Future[Unit] = Future {
+    lazy val (user, gender) = blocking(queue.take())
 
-          lazy val results: (Map[AID, SeriesName], Map[AID, Rating]) = processData(data)
+    processName(user, scrape) map { data =>
 
-          results._1 foreach {
-            case (aid, name) => DB.addName(aid, name)
-          }
+      lazy val results: (Map[AID, SeriesName], Map[AID, Rating]) = blocking(processData(data))
 
-          results._2 foreach {
-            case (aid, rating) => DB.addRating(user, aid, rating)
-          }
+      results._1 foreach {
+        case (aid, name) => DB.addName(aid, name)
+      }
 
-          DB.addUsername(user, gender)
-          DB.processUsername(user)
+      results._2 foreach {
+        case (aid, rating) => DB.addRating(user, aid, rating)
+      }
 
-        } flatMap {
-          _ => blocking {
-            processUsernames(queue, scrape)
-          }
-        }
+      DB.addUsername(user, gender)
+      DB.processUsername(user)
+
     } escalate
-  }
+
+    processUsernames(queue, scrape)
+    ()
+  } escalate
 }

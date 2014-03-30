@@ -7,16 +7,17 @@ import java.util.concurrent.{BlockingQueue, ArrayBlockingQueue}
 import scala.concurrent.blocking
 import concurrent.ExecutionContext.Implicits.global
 import com.haneymaxwell.animerecommender.Util._
+import scala.concurrent.duration._
 
-class DriverManager(nScrapers: Int, queueSize: Int = 4) {
+class DriverManager(nScrapers: Int, queueSize: Int = 2) {
 
   protected class Scraper extends Chrome {
-    def source(url: String) = {
+    def source(url: String) = blocking {
       go to url
       pageSource
     }
 
-    def text(url: String) = {
+    def text(url: String) = blocking {
       import org.openqa.selenium.By
       go to url
       webDriver.findElement(By.tagName("body")).getText
@@ -29,11 +30,13 @@ class DriverManager(nScrapers: Int, queueSize: Int = 4) {
 
   lazy val queue: BlockingQueue[ScrapeRequest] = new ArrayBlockingQueue(queueSize)
 
+  QueueUtils.report(Seq(("DriverQueue", queue)), 5 seconds)
+
   lazy val scrapers = Range(0, nScrapers) map {_ => new Scraper}
 
-  scrapers map { scrape => consume(scrape) }
+  scrapers.zipWithIndex map { case (scrape, i) => consume(scrape, i) }
 
-  protected def consume(scrape: Scraper, nScrapes: Int = 0): Future[Unit] = Future {
+  protected def consume(scrape: Scraper, index: Int, nScrapes: Int = 0): Future[Unit] = Future {
     if (nScrapes > 20) {
       println("Maximum scrapes exhausted for scraper, restarting scraper")
       scrape.cleanup()
@@ -44,14 +47,17 @@ class DriverManager(nScrapers: Int, queueSize: Int = 4) {
       import scala.concurrent.Await
       import scala.concurrent.duration._
 
-      lazy val request = blocking(queue.take())
+      // println(s"Scraper $index ready to process")
+      val request = blocking(queue.take())
+      // println(s"Scraper $index got request")
 
       def getResult(scrape: Scraper, timeout: Duration = 1.minute): (Scraper, String) =
         try {
-          (scrape, Await.result(Future(request.fx(scrape)).escalate, timeout))
+          (scrape, Await.result(
+            Future{ /* println(s"Scraper $index running scraping task") ;*/ request.fx(scrape) }.escalate, timeout))
         } catch {
           case e: TimeoutException => {
-            println("Timed out on request for scraper, restarting scraper")
+            println(s"Timed out on request for scraper $index, restarting scraper")
             scrape.cleanup()
             lazy val newScrape = new Scraper
             getResult(newScrape, timeout * 2)
@@ -60,7 +66,8 @@ class DriverManager(nScrapers: Int, queueSize: Int = 4) {
 
       lazy val result = getResult(scrape)
       request.promise.success(result._2)
-      consume(result._1, nScrapes + 1)
+      // println(s"Scraper $index completed request")
+      consume(result._1, index, nScrapes + 1)
     }
   }
 

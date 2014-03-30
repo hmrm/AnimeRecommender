@@ -48,7 +48,8 @@ object DB {
       names +=(aid.get, name.get)
       println(s"Added name: $name for series $aid")
     } catch {
-      case e: SQLException if e.getMessage.contains("unique") => println(s"$name already present, not adding")
+      case e: SQLException if e.getMessage.contains("unique") => () //println(s"$name already present, not adding")
+      case e: SQLException if e.getMessage.contains("locked") => addName(aid, name)
     }
   }
 
@@ -56,41 +57,52 @@ object DB {
     lazy val hash: Int = user.hashCode() ^ aid.hashCode()
     try {
       ratings += Tuple4(hash, user.get, aid.get, rating.get)
-      println(s"Added rating: $rating for anime: $aid for user $user")
+      // println(s"Added rating: $rating for anime: $aid for user $user")
     } catch {
-      case e: SQLException if e.getMessage.contains("unique") => {
+      case e: SQLException if e.getMessage.contains("unique") => try {
         lazy val q = for { r <- ratings if r.hash === hash } yield r.rating
         q.update(rating.get)
-        println(s"Updated rating $aid $user to $rating")
-      }
+        // println(s"Updated rating $aid $user to $rating")
+      } catch { case e: SQLException if e.getMessage.contains("locked") => addRating(user, aid, rating) }
+      case e: SQLException if e.getMessage.contains("locked") => addRating(user, aid, rating)
     }
   }
 
   def addUsername(user: Username, gender: Gender): Unit = db withSession { implicit session =>
     try { usernames +=(user.get, gender.toInt, 0); println(s"Added username: $user") }
-    catch { case e: SQLException if e.getMessage.contains("unique") => {
-      println(s"$user already present, not adding")
-    }}
+    catch {
+      case e: SQLException if e.getMessage.contains("unique") => {
+        println(s"$user already present, not adding")
+      }
+      case e: SQLException if e.getMessage.contains("locked") => addUsername(user, gender)
+    }
   }
 
   def usernamePresent(user: Username): Boolean = db withSession { implicit session =>
-    usernames.filter(_.username === user.get).exists.run
+    try { usernames.filter(_.username === user.get).exists.run }
+    catch { case e: SQLException if e.getMessage.contains("locked") => usernamePresent(user) }
   }
 
   def processUsername(user: Username): Unit = db withSession { implicit session =>
-    lazy val q = for { u <- usernames if u.username === user.get } yield u.lastProcessed
-    q.update(System.currentTimeMillis())
+    try {
+      lazy val q = for { u <- usernames if u.username === user.get } yield u.lastProcessed
+      q.update(System.currentTimeMillis())
+    } catch { case e: SQLException if e.getMessage.contains("locked") => processUsername(user) }
   }
 
   def nUsernamesProcessed(gender: Gender): Int = db withSession { implicit session =>
-    lazy val q = for { u <- usernames if u.gender === gender.toInt } yield u
-    q.list.size
+    try {
+      lazy val q = for {u <- usernames if u.gender === gender.toInt} yield u
+      q.list.size
+    } catch { case e: SQLException if e.getMessage.contains("locked") => nUsernamesProcessed(gender) }
   }
 
   /** NOTE: Least recent will be first */
   def usernamesSortedByRecentness(n: Int): Seq[(Username, Gender)] = db withSession { implicit session =>
-    usernames.sortBy(_.lastProcessed).map(u => (u.username, u.gender)).take(n).run.map {
-      case (username, gender) => (Username(username), Gender(gender))
-    }
+    try {
+      usernames.sortBy(_.lastProcessed).map(u => (u.username, u.gender)).take(n).run.map {
+        case (username, gender) => (Username(username), Gender(gender))
+      }
+    } catch { case e: SQLException if e.getMessage.contains("locked") => usernamesSortedByRecentness(n) }
   }
 }
