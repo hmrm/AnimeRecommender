@@ -8,6 +8,7 @@ import scala.concurrent.blocking
 import concurrent.ExecutionContext.Implicits.global
 import com.haneymaxwell.animerecommender.Util._
 import scala.concurrent.duration._
+import QueueUtils.CompletableQueue
 
 class DriverManager(nScrapers: Int, queueSize: Int = 2) {
   import akka.actor.ActorSystem
@@ -31,9 +32,10 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
 
   import scala.concurrent.{Promise, Future}
 
-  lazy val queue: BlockingQueue[ScrapeRequest] = new ArrayBlockingQueue(queueSize)
+  lazy val underlying = new ArrayBlockingQueue[ScrapeRequest](queueSize)
+  lazy val queue: CompletableQueue[ScrapeRequest] = new CompletableQueue[ScrapeRequest](underlying)
 
-  QueueUtils.report(Seq(("DriverQueue", queue)), 5 seconds)
+  QueueUtils.report(Seq(("DriverQueue", underlying)), 5 seconds)
 
   lazy val scrapers = Range(0, nScrapers) map {_ => new Scraper}
 
@@ -54,19 +56,21 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
       val request = blocking(queue.take())
       // println(s"Scraper $index got request")
 
-      def getResult(scrape: Scraper, timeout: Duration = 1.minute, reattempt: Int = 0): (Scraper, String) =
+      def getResult(scrape: Scraper, timeout: Duration = 5.minute, reattempt: Int = 0): (Scraper, String) =
         try {
           (scrape, Await.result(
             Future{ /* println(s"Scraper $index running scraping task") ;*/ request.fx(scrape) }.escalate, timeout))
         } catch {
           case e: TimeoutException => {
+            if (timeout > 15.minutes) { scrape.cleanup() ; throw e }
+
             println(s"Timed out on request for scraper $index, restarting scraper")
             scrape.cleanup()
             lazy val newScrape = new Scraper
             getResult(newScrape, timeout * 2, reattempt)
           }
-          case e => {
-            if (reattempt > 10) throw e
+          case e: Throwable => {
+            if (reattempt > 10) { scrape.cleanup(); throw e }
             else {
               println(s"Got error $e for scraper $index, reattempting")
               scrape.cleanup()
@@ -75,11 +79,13 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
             }
           }
         }
-
-      lazy val result = getResult(scrape)
-      request.promise.success(result._2)
-      // println(s"Scraper $index completed request")
-      consume(result._1, index, nScrapes + 1)
+      try {
+        lazy val result = getResult(scrape)
+        request.promise.success(result._2)
+        consume(result._1, index, nScrapes + 1)
+      } catch {
+        case e: Throwable => request.promise.failure(e) ; consume(new Scraper, index, nScrapes + 1)
+      }
     }
   }
 
@@ -99,5 +105,8 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
     dispatch(scrape => scrape text   url)
   }
 
-  def done() = scrapers map (scrape => scrape.cleanup())
+  def done() = {
+    queue.finish()
+    scrapers map (scrape => scrape.cleanup())
+  }
 }

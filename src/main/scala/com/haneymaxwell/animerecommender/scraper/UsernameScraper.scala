@@ -11,6 +11,7 @@ import com.haneymaxwell.animerecommender.Util._
 object UsernameScraper {
 
   import Data._
+  import com.haneymaxwell.animerecommender.scraper.QueueUtils.CompletableQueue
 
   lazy val BaseUrl = "http://myanimelist.net/users.php?q="
 
@@ -28,7 +29,7 @@ object UsernameScraper {
     getResults(gender, index, scrape) map (NameExtractor.findAllMatchIn(_).toSet.map((m: Match) => Username(m.group("name"))))
   }
 
-  def generateNames(scrape: DriverManager, queue: BlockingQueue[(Username, Gender)]) = {
+  def generateNames(scrape: DriverManager, queue: CompletableQueue[(Username, Gender)]) = {
     lazy val nFemale: Int = DB.nUsernamesProcessed(Female)
     lazy val nMale:   Int = DB.nUsernamesProcessed(Male)
 
@@ -52,7 +53,7 @@ object UsernameScraper {
     results map { case (newFemaleNames, newMaleNames) =>
       newFemaleNames foreach (name => putIfAbsent(name, Female))
       newMaleNames   foreach (name => putIfAbsent(name, Male))
-    } escalate
+    }
   }
 }
 

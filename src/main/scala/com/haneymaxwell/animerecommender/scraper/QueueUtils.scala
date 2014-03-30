@@ -29,4 +29,30 @@ object QueueUtils {
       }
     }
   }
+
+  class CompletableQueue[A](underlying: BlockingQueue[A]) {
+
+    import java.util.concurrent.locks.ReentrantReadWriteLock
+
+    private val lock = new ReentrantReadWriteLock(true)
+
+    private def read[A](a: => A): A = {
+      lock.readLock().lock()
+      val res = a
+      lock.readLock().unlock()
+      res
+    }
+
+    def put(a: A) = read(underlying.put(a))
+
+    def take(): A = underlying.take()
+
+    def finish() = {
+      lock.writeLock().lock()
+      while(!underlying.isEmpty()) {
+        println("Draining queue not yet empty, delaying 10 seconds")
+        blocking(Thread.sleep(10000))
+      }
+    }
+  }
 }

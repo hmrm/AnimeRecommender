@@ -10,6 +10,7 @@ import com.haneymaxwell.animerecommender.Util._
 object RatingsScraper {
 
   import Data._
+  import com.haneymaxwell.animerecommender.scraper.QueueUtils.CompletableQueue
 
   def genUrl(username: Username): String =
     s"http://myanimelist.net/malappinfo.php?u=${username.get}&status=all&type=anime"
@@ -43,7 +44,7 @@ object RatingsScraper {
     (res.map(x => x._1).toMap, res.map(x => x._2).toMap)
   }
 
-  def processUsernames(queue: BlockingQueue[(Username, Gender)], scrape: DriverManager): Future[Unit] = Future {
+  def processUsernames(queue: CompletableQueue[(Username, Gender)], scrape: DriverManager): Future[Unit] = Future {
     lazy val (user, gender) = blocking(queue.take())
 
     lazy val result: Future[String] = processName(user, scrape).escalate
