@@ -16,18 +16,23 @@ object Main {
 
     DB.make()
 
-    lazy val underlying = new ArrayBlockingQueue[(Username, Gender)](40)
+    lazy val underlying = new ArrayBlockingQueue[(Username, Gender)](80)
     lazy val usernameQueue = new CompletableQueue[(Username, Gender)](underlying)
     lazy val scrape = new DriverManager(5)
     RatingsScraper.processUsernames(usernameQueue, scrape)
     QueueUtils.report(Seq(("UsernameQueue", underlying)), 5 seconds)
     UsernameManager.scrapeAndUpdate(scrape, usernameQueue)
 
-    scheduler.schedule(4.hours, 4.hours) {
-      Future { blocking(Thread.sleep(1000000)); System.exit(0) }
+    scheduler.schedule(1.hours, 1.hours) {
+      println("Beginning shutdown")
+      Future { blocking(Thread.sleep(1000000)); println("Expired graceful shutdown timeout, shutting down"; System.exit(0) }
+      println("Draining username queue for shutdown")
       usernameQueue.finish()
+      println("Username queue drained, shutting down scrapers for shutdown")
       scrape.done()
+      println("Scrapers shut down, delaying 100 seconds to allow remaining database queries to finish")
       Thread.sleep(100000)
+      println("Shutdown delay over, assuming safe to shut down")
       System.exit(0)
     }
   }
