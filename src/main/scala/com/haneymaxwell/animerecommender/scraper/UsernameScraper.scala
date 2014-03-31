@@ -29,18 +29,14 @@ object UsernameScraper {
     getResults(gender, index, scrape) map (NameExtractor.findAllMatchIn(_).toSet.map((m: Match) => Username(m.group("name"))))
   }
 
-  def generateNames(scrape: DriverManager, queue: CompletableQueue[(Username, Gender)]) = {
-    lazy val nFemale: Int = DB.nUsernamesProcessed(Female)
-    lazy val nMale:   Int = DB.nUsernamesProcessed(Male)
+  def generateNames(scrape: DriverManager, queue: CompletableQueue[(Username, Gender)], gender: Gender) = {
+    lazy val nProcessed:   Int = DB.nUsernamesProcessed(gender)
 
-    println(s"Scraping for new usernames starting from male: $nMale, female: $nFemale")
+    println(s"Scraping for new usernames for gender $gender starting from $nProcessed");
 
-    lazy val femaleResult: Future[Set[Username]] = getNames(Female, nFemale, scrape)
-    lazy val maleResult:   Future[Set[Username]] = getNames(Male, nMale, scrape)
+    lazy val result: Future[Set[Username]] = getNames(Female, nProcessed, scrape)
 
-    lazy val results: Future[(Set[Username], Set[Username])] = femaleResult zip maleResult
-
-    def putIfAbsent(username: Username, gender: Gender) = {
+    def putIfAbsent(username: Username) = {
       if (DB.usernamePresent(username)) {
         println(s"Scraped username $username which was already present in database")
       } else {
@@ -50,10 +46,7 @@ object UsernameScraper {
       }
     }
 
-    results map { case (newFemaleNames, newMaleNames) =>
-      newFemaleNames foreach (name => putIfAbsent(name, Female))
-      newMaleNames   foreach (name => putIfAbsent(name, Male))
-    }
+    result map { names => names foreach putIfAbsent }
   }
 }
 

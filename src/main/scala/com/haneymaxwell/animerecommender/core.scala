@@ -18,10 +18,11 @@ object Main {
 
     lazy val underlying = new ArrayBlockingQueue[(Username, Gender)](80)
     lazy val usernameQueue = new CompletableQueue[(Username, Gender)](underlying)
-    lazy val scrape = new DriverManager(5)
+    lazy val scrape = new DriverManager(6)
     RatingsScraper.processUsernames(usernameQueue, scrape)
     QueueUtils.report(Seq(("UsernameQueue", underlying)), 5 seconds)
-    UsernameManager.scrapeAndUpdate(scrape, usernameQueue)
+    UsernameManager.scrapeAndUpdate(scrape, usernameQueue, Female)
+    UsernameManager.scrapeAndUpdate(scrape, usernameQueue, Male)
 
     scheduler.schedule(1.hours, 1.hours) {
       println("Beginning shutdown")

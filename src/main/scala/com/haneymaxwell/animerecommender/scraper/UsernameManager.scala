@@ -17,21 +17,22 @@ object UsernameManager {
 
   def scrapeAndUpdate(scraper: DriverManager,
                       queue: CompletableQueue[(Username, Gender)],
+                      gender: Gender,
                       last: Int = -100,
                       wasScrape: Boolean = true): Future[Unit] = Future {
-    val current = Seq(Male, Female) map DB.nUsernamesProcessed reduce (_ + _)
+    val current = DB.nUsernamesProcessed(gender)
 
-    if (current - last < 10 && wasScrape) {
-      println(s"Last username scraping run only generated ${current - last}, updating other users")
+    if (current - last < 3 && wasScrape) {
+      println(s"Last username scraping run for $gender only generated ${current - last}, updating other users")
 
-      updateLeastRecent(queue, 1000) onComplete { _ =>
-        blocking(scrapeAndUpdate(scraper, queue, current, wasScrape = false))
+      updateLeastRecent(queue, 500) onComplete { _ =>
+        blocking(scrapeAndUpdate(scraper, queue, gender, current, wasScrape = false))
       }
     } else {
-      println(s"Last username scraping generated ${current - last}, continuing scraping")
+      println(s"Last username scraping for $gender generated ${current - last}, continuing scraping")
 
-      UsernameScraper.generateNames(scraper, queue) onComplete { _ =>
-        blocking(scrapeAndUpdate(scraper, queue, current, wasScrape = true))
+      UsernameScraper.generateNames(scraper, queue, gender) onComplete { _ =>
+        blocking(scrapeAndUpdate(scraper, queue, gender, current, wasScrape = true))
       }
     }
   }
