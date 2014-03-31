@@ -25,7 +25,7 @@ object Main {
 
     scheduler.schedule(1.hours, 1.hours) {
       println("Beginning shutdown")
-      Future { blocking(Thread.sleep(1000000)); println("Expired graceful shutdown timeout, shutting down"; System.exit(0) }
+      Future { blocking(Thread.sleep(1000000)); println("Expired graceful shutdown timeout, shutting down"); System.exit(0) }
       println("Draining username queue for shutdown")
       usernameQueue.finish()
       println("Username queue drained, shutting down scrapers for shutdown")
