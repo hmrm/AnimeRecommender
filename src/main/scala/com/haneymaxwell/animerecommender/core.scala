@@ -24,7 +24,7 @@ object Main {
     UsernameManager.scrapeAndUpdate(scrape, usernameQueue, Female)
     UsernameManager.scrapeAndUpdate(scrape, usernameQueue, Male)
 
-    scheduler.schedule(1.hours, 1.hours) {
+    scheduler.schedule(55.days, 55.days) {
       println("Beginning shutdown")
       Future { blocking(Thread.sleep(1000000)); println("Expired graceful shutdown timeout, shutting down"); System.exit(0) }
       println("Draining username queue for shutdown")

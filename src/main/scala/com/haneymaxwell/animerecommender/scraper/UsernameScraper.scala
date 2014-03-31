@@ -29,12 +29,10 @@ object UsernameScraper {
     getResults(gender, index, scrape) map (NameExtractor.findAllMatchIn(_).toSet.map((m: Match) => Username(m.group("name"))))
   }
 
-  def generateNames(scrape: DriverManager, queue: CompletableQueue[(Username, Gender)], gender: Gender) = {
-    lazy val nProcessed:   Int = DB.nUsernamesProcessed(gender)
+  def generateNames(scrape: DriverManager, queue: CompletableQueue[(Username, Gender)], gender: Gender, start: Int) = {
+    println(s"Scraping for new usernames for gender $gender starting from $start")
 
-    println(s"Scraping for new usernames for gender $gender starting from $nProcessed");
-
-    lazy val result: Future[Set[Username]] = getNames(Female, nProcessed, scrape)
+    lazy val result: Future[Set[Username]] = getNames(gender, start, scrape)
 
     def putIfAbsent(username: Username) = {
       if (DB.usernamePresent(username)) {
