@@ -13,16 +13,16 @@ object RatingsScraper {
   import com.haneymaxwell.animerecommender.scraper.QueueUtils.CompletableQueue
 
   def genUrl(username: Username): String =
-    s"http://myanimelist.net/malappinfo.php?u=${username.get}&status=all&type=anime"
+    s"view-source:myanimelist.net/malappinfo.php?u=${username.get}&status=all&type=anime"
 
   def processName(name: Username, scrape: DriverManager): Future[String] = {
-    scrape text genUrl(name) map {
+    scrape source genUrl(name) map {
       str => str.split('\n').mkString("")
     } // I am not entirely sure why this is necessary, but it is
   }
 
-  // Note: it would be nicer just to parse this into XML, but it looks like it isn't adequately standards conforming
-  def genXmlRegex(tag: String) = s"""(?<=<$tag>)((?!</$tag>).)*(?=</$tag>)""".r
+  // HAAAAACK
+  def genXmlRegex(tag: String) = s"""(?<=<span class="webkit-html-tag">&lt;$tag&gt;</span>)((?!<span class="webkit-html-tag">&lt;/$tag&gt;</span>).)*(?=<span class="webkit-html-tag">&lt;/$tag&gt;</span>)""".r
 
   lazy val GetSeries = genXmlRegex("anime")
   lazy val GetName   = genXmlRegex("series_title")

@@ -21,7 +21,7 @@ object UsernameManager {
                       last: Int = -100,
                       wasScrape: Boolean = true,
                       modifierBumps: Int = 0,
-                      maxModifierBumps: Int = 30,
+                      maxModifierBumps: Int = 300,
                       modifier: Int = 0): Future[Unit] = Future {
     val current = DB.nUsernamesProcessed(gender)
 
