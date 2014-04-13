@@ -16,6 +16,7 @@ object RatingsScraper {
     s"view-source:myanimelist.net/malappinfo.php?u=${username.get}&status=all&type=anime"
 
   def processName(name: Username, scrape: DriverManager): Future[String] = {
+    println(s"Scraping for name $name")
     scrape source genUrl(name) map {
       str => str.split('\n').mkString("")
     } // I am not entirely sure why this is necessary, but it is
@@ -45,7 +46,9 @@ object RatingsScraper {
   }
 
   def processUsernames(queue: CompletableQueue[(Username, Gender)], scrape: DriverManager): Future[Unit] = Future {
+    println("Ready to process username")
     lazy val (user, gender) = blocking(queue.take())
+    println(s"Processing $user")
 
     lazy val result: Future[String] = processName(user, scrape).escalate
 
@@ -62,6 +65,7 @@ object RatingsScraper {
 
       blocking(DB.addUsername(user, gender))
       blocking(DB.processUsername(user))
+      Metrics.usernameProcessed.incrementAndGet()
     }
 
     processUsernames(queue, scrape)

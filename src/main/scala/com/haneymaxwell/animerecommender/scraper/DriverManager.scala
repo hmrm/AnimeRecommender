@@ -8,9 +8,9 @@ import scala.concurrent.blocking
 import concurrent.ExecutionContext.Implicits.global
 import com.haneymaxwell.animerecommender.Util._
 import scala.concurrent.duration._
-import QueueUtils.CompletableQueue
+import QueueUtils._
 
-class DriverManager(nScrapers: Int, queueSize: Int = 2) {
+class DriverManager(nScrapers: Int, queueSize: Int = 1) {
   import akka.actor.ActorSystem
   lazy val system = ActorSystem()
   lazy val scheduler = system.scheduler
@@ -32,10 +32,11 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
 
   import scala.concurrent.{Promise, Future}
 
-  lazy val underlying = new ArrayBlockingQueue[ScrapeRequest](queueSize)
+  lazy val reallyUnderlying = new ArrayBlockingQueue[ScrapeRequest](queueSize)
+  lazy val underlying = QueueUtils.rateLimit(reallyUnderlying, 1, 0.5.seconds)
   lazy val queue: CompletableQueue[ScrapeRequest] = new CompletableQueue[ScrapeRequest](underlying)
 
-  QueueUtils.report(Seq(("DriverQueue", underlying)), 5 seconds)
+  QueueUtils.report(Seq(("DriverQueue", reallyUnderlying)), 100 seconds)
 
   lazy val scrapers = Range(0, nScrapers) map {_ => new Scraper}
 
@@ -56,10 +57,23 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
       val request = blocking(queue.take())
       // println(s"Scraper $index got request")
 
-      def getResult(scrape: Scraper, timeout: Duration = 5.minute, reattempt: Int = 0): (Scraper, String) =
+      def getResult(scrape: Scraper, timeout: Duration = 5.minute, reattempt: Int = 0, blockTime: FiniteDuration = 1.seconds): (Scraper, String) =
         try {
-          (scrape, Await.result(
+          lazy val res = (scrape, Await.result(
             Future{ /* println(s"Scraper $index running scraping task") ;*/ request.fx(scrape) }.escalate, timeout))
+          if (res._2.contains("Incapsula incident")) {
+            println("Detected incident!!!")
+            Metrics.incidents.incrementAndGet()
+//            queue.block(blockTime)
+            Thread.sleep(blockTime.toMillis)
+//            getResult(scrape, timeout, reattempt, blockTime * 2)
+            scrape.cleanup()
+            lazy val newScrape = new Scraper
+            Thread.sleep(blockTime.toMillis)
+            getResult(newScrape, timeout * 2, reattempt, blockTime * 2)
+          } else {
+            res
+          }
         } catch {
           case e: TimeoutException => {
             if (timeout > 15.minutes) { scrape.cleanup() ; throw e }
@@ -82,6 +96,7 @@ class DriverManager(nScrapers: Int, queueSize: Int = 2) {
       try {
         lazy val result = getResult(scrape)
         request.promise.success(result._2)
+        Metrics.scrapesDone.incrementAndGet()
         consume(result._1, index, nScrapes + 1)
       } catch {
         case e: Throwable => request.promise.failure(e) ; consume(new Scraper, index, nScrapes + 1)

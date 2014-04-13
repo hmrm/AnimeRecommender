@@ -7,6 +7,7 @@ import java.util.concurrent.BlockingQueue
 object DB {
 
   import Data._
+  import com.haneymaxwell.animerecommender.scraper.UsernameManager.Block
 
   lazy val db = Database.forURL("jdbc:sqlite:/home/hmrm/ardb.db", driver = "org.sqlite.JDBC")
 
@@ -34,10 +35,19 @@ object DB {
   }
   lazy val ratings = TableQuery[Ratings]
 
+  class Blocks(tag: Tag) extends Table[(Int, Int, Int, Long)](tag, "BLOCKS") {
+    def hash = column[Int]("HASH", O.PrimaryKey)
+    def start = column[Int]("START")
+    def gender = column[Int]("GENDER")
+    def lastProcessed = column[Long]("PROCESSED")
+    def * = (hash, start, gender, lastProcessed)
+  }
+  lazy val blocks = TableQuery[Blocks]
+
   def make(): Unit = db withSession { implicit session =>
     import java.sql.SQLException
 
-    Seq(ratings.ddl, names.ddl, usernames.ddl) foreach { table =>
+    Seq(ratings.ddl, names.ddl, usernames.ddl, blocks.ddl) foreach { table =>
       try {
         table.create
       } catch { case e: SQLException => () }
@@ -52,7 +62,7 @@ object DB {
   def retryForLocked[A, B](delay: Int)(f: A => B): A => B = { a =>
     try { synchronized(f(a)) }
     catch {
-      case e: SQLException if e.getMessage.contains("locked") => { Thread.sleep(1); retryForLocked(delay * 2)(f)(a) }
+      case e: SQLException if e.getMessage.contains("locked") => { Metrics.dbConflicts.incrementAndGet(); Thread.sleep(delay); retryForLocked(delay * 2)(f)(a) }
     }
   }
 
@@ -86,15 +96,34 @@ object DB {
     }
   }}
 
+  lazy val addBlock: ((Block, Gender)) => Unit = retryForLocked(1) { ignoreUnique { case ((block, gender)) =>
+    db withSession { implicit session =>
+      blocks += (block.get + gender.toInt, block.get, gender.toInt, 0); println(s"Added block: $block $gender")
+    }
+  }}
+
   lazy val usernamePresent: Username => Boolean = retryForLocked(1) { user =>
     db withSession { implicit session =>
       usernames.filter(_.username === user.get).exists.run
     }
   }
 
+  lazy val blockPresent: ((Block, Gender)) => Boolean = retryForLocked(1) { case ((block, gender)) =>
+    db withSession { implicit session =>
+      blocks.filter(_.hash === (block.get + gender.toInt)).exists.run
+    }
+  }
+
   lazy val processUsername: Username => Unit = retryForLocked(1) { user =>
     db withSession { implicit session =>
       lazy val q = for {u <- usernames if u.username === user.get} yield u.lastProcessed
+      q.update(System.currentTimeMillis())
+    }
+  }
+
+  lazy val processBlock: ((Block, Gender)) => Unit = retryForLocked(1) { case (block, gender) =>
+    db withSession { implicit session =>
+      lazy val q = for {b <- blocks if b.hash === (block.get + gender.toInt)} yield b.lastProcessed
       q.update(System.currentTimeMillis())
     }
   }
@@ -111,6 +140,14 @@ object DB {
     db withSession { implicit session =>
       usernames.sortBy(_.lastProcessed).map(u => (u.username, u.gender)).take(n).run.map {
         case (username, gender) => (Username(username), Gender(gender))
+      }
+    }
+  }
+
+  lazy val blocksSortedByRecentness: Int => Seq[(Block, Gender)] = retryForLocked(1) { n =>
+    db withSession { implicit session =>
+      blocks.sortBy(_.lastProcessed).map(b => (b.start, b.gender)).take(n).run.map {
+        case (block, gender) => (Block(block), Gender(gender))
       }
     }
   }

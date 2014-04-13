@@ -41,6 +41,7 @@ object UsernameScraper {
         println(s"Scraped username $username which is a new username, enqueueing for processing")
         DB.addUsername(username, gender)
         blocking(queue.put((username, gender)))
+        Metrics.newUsernameProcessed.incrementAndGet()
       }
     }
 
