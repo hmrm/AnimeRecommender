@@ -1,14 +1,13 @@
 package com.haneymaxwell.animerecommender.scraper
 
+import java.util.concurrent.Executors
+
 import Predef.{any2stringadd => _, _}
-import java.util.concurrent.{BlockingQueue, ArrayBlockingQueue}
-import scala.concurrent.blocking
-import concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.{ExecutionContext, blocking, Future}
 import scala.util.matching.Regex
-import scala.concurrent.Future
-import com.haneymaxwell.animerecommender.Util._
 
 object UsernameScraper {
+  implicit lazy val ec = ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
 
   import Data._
   import com.haneymaxwell.animerecommender.scraper.QueueUtils.CompletableQueue

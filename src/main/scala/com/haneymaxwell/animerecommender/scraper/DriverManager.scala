@@ -1,19 +1,87 @@
 package com.haneymaxwell.animerecommender.scraper
 
+import java.util.concurrent.atomic.AtomicInteger
+
+import akka.util.Timeout
+import com.typesafe.scalalogging.slf4j.LazyLogging
 import org.scalatest.selenium.Chrome
 
 import Predef.{any2stringadd => _, _}
-import java.util.concurrent.{BlockingQueue, ArrayBlockingQueue}
-import scala.concurrent.blocking
-import concurrent.ExecutionContext.Implicits.global
+import java.util.concurrent.{TimeoutException, BlockingQueue, ArrayBlockingQueue, Executors}
+import scala.concurrent.{ExecutionContext, blocking}
 import com.haneymaxwell.animerecommender.Util._
 import scala.concurrent.duration._
-import QueueUtils._
+import akka.actor._
+import akka.pattern.ask
+import scala.concurrent._
 
-class DriverManager(nScrapers: Int, queueSize: Int = 1) {
-  import akka.actor.ActorSystem
-  lazy val system = ActorSystem()
+import scala.util.Try
+
+class DriverManager(nScrapers: Int) extends LazyLogging {
+  implicit val ec = ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
+
+  lazy val system = ActorSystem("my-system", defaultExecutionContext = Some(ec))
   lazy val scheduler = system.scheduler
+
+  case class Source(url: String)
+  case class Text(url:String)
+  case object Cleanup
+
+  class ScraperActor extends Actor {
+    var underlying = new Scraper
+    var scrapes = 0
+    def receive = {
+      case Source(url) => process(() => underlying.source(url))
+      case Text(url)   => process(() => underlying.text(url))
+      case Cleanup     => underlying.cleanup()
+    }
+
+    def process(work: () => String, timeout: Duration = 5.minutes, incapsulaBackoff: Duration = 10.seconds): Try[String] = {
+      checkScrapes()
+      Try {
+        val result = Await.result(Future(work()), timeout)
+        if (result.contains("Incapsula incident")) {
+          replaceUnderlying()
+          if (incapsulaBackoff < 1.hour) {
+            Metrics.incidents.incrementAndGet()
+            logger.info(s"Incapsula incident detected, backing off for $incapsulaBackoff")
+            Thread.sleep(incapsulaBackoff.toMillis)
+            process(work, timeout, incapsulaBackoff * 2).get
+          } else {
+            val msg = "Incapsula backoff exceeded one hour!"
+            logger.error(msg)
+            throw new Exception(msg)
+          }
+        } else {
+          result
+        }
+      } recoverWith {
+        case e: Throwable => {
+          if (timeout < 30.minutes) {
+            replaceUnderlying()
+            logger.info(s"Failed request, retrying $e")
+            process(work, timeout * 2, incapsulaBackoff)
+          } else {
+            val msg = s"Failed with too high timeout! $e"
+            logger.error(msg)
+            throw new Exception(msg)
+          }
+        }
+      }
+    }
+
+    def checkScrapes() = {
+      if (scrapes > 20) {
+        replaceUnderlying()
+        scrapes = 0
+      }
+    }
+
+    def replaceUnderlying() = {
+      underlying.cleanup()
+      underlying = new Scraper
+    }
+  }
 
   protected class Scraper extends Chrome {
     def source(url: String) = blocking {
@@ -30,98 +98,27 @@ class DriverManager(nScrapers: Int, queueSize: Int = 1) {
     def cleanup() = quit()
   }
 
-  import scala.concurrent.{Promise, Future}
+  lazy val scrapers = Range(0, nScrapers) map {_ => system.actorOf(Props(new ScraperActor))}
 
-  lazy val reallyUnderlying = new ArrayBlockingQueue[ScrapeRequest](queueSize)
-  lazy val underlying = QueueUtils.rateLimit(reallyUnderlying, 1, 0.5.seconds)
-  lazy val queue: CompletableQueue[ScrapeRequest] = new CompletableQueue[ScrapeRequest](underlying)
-
-  QueueUtils.report(Seq(("DriverQueue", reallyUnderlying)), 100 seconds)
-
-  lazy val scrapers = Range(0, nScrapers) map {_ => new Scraper}
-
-  scrapers.zipWithIndex map { case (scrape, i) => consume(scrape, i) }
-
-  protected def consume(scrape: Scraper, index: Int, nScrapes: Int = 0): Future[Unit] = Future {
-    if (nScrapes > 20) {
-      println("Maximum scrapes exhausted for scraper, restarting scraper")
-      scrape.cleanup()
-      lazy val newScrape = new Scraper
-      consume(newScrape, 0)
-    } else {
-      import java.util.concurrent.TimeoutException
-      import scala.concurrent.Await
-      import scala.concurrent.duration._
-
-      // println(s"Scraper $index ready to process")
-      val request = blocking(queue.take())
-      // println(s"Scraper $index got request")
-
-      def getResult(scrape: Scraper, timeout: Duration = 5.minute, reattempt: Int = 0, blockTime: FiniteDuration = 1.seconds): (Scraper, String) =
-        try {
-          lazy val res = (scrape, Await.result(
-            Future{ /* println(s"Scraper $index running scraping task") ;*/ request.fx(scrape) }.escalate, timeout))
-          if (res._2.contains("Incapsula incident")) {
-            println("Detected incident!!!")
-            Metrics.incidents.incrementAndGet()
-//            queue.block(blockTime)
-            Thread.sleep(blockTime.toMillis)
-//            getResult(scrape, timeout, reattempt, blockTime * 2)
-            scrape.cleanup()
-            lazy val newScrape = new Scraper
-            Thread.sleep(blockTime.toMillis)
-            getResult(newScrape, timeout * 2, reattempt, blockTime * 2)
-          } else {
-            res
-          }
-        } catch {
-          case e: TimeoutException => {
-            if (timeout > 15.minutes) { scrape.cleanup() ; throw e }
-
-            println(s"Timed out on request for scraper $index, restarting scraper")
-            scrape.cleanup()
-            lazy val newScrape = new Scraper
-            getResult(newScrape, timeout * 2, reattempt)
-          }
-          case e: Throwable => {
-            if (reattempt > 10) { scrape.cleanup(); throw e }
-            else {
-              println(s"Got error $e for scraper $index, reattempting")
-              scrape.cleanup()
-              lazy val newScrape = new Scraper
-              getResult(newScrape, timeout, reattempt + 1)
-            }
-          }
-        }
-      try {
-        lazy val result = getResult(scrape)
-        request.promise.success(result._2)
-        Metrics.scrapesDone.incrementAndGet()
-        consume(result._1, index, nScrapes + 1)
-      } catch {
-        case e: Throwable => request.promise.failure(e) ; consume(new Scraper, index, nScrapes + 1)
-      }
-    }
-  }
 
   case class ScrapeRequest(promise: Promise[String], fx: Scraper => String)
 
-  protected def dispatch(fx: Scraper => String): Future[String] = {
-    lazy val promise = Promise[String]()
-    blocking(queue.put(ScrapeRequest(promise, fx)))
-    promise.future.escalate
+  val index = new AtomicInteger(0)
+
+  protected def dispatch(msg: Any): Future[String] = {
+    val idx = index.getAndIncrement % scrapers.length
+    scrapers(idx).ask(msg)(Timeout(10.hours)).mapTo[Try[String]].map(_.get)
   }
 
   def source(url: String): Future[String] = {
-    dispatch(scrape => scrape source url)
+    dispatch(Source(url))
   }
 
   def text  (url: String): Future[String] = {
-    dispatch(scrape => scrape text   url)
+    dispatch(Text(url))
   }
 
   def done() = {
-    queue.finish()
-    scrapers map (scrape => scrape.cleanup())
+    scrapers map (_ ! Cleanup)
   }
 }
